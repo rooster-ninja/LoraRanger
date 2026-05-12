@@ -613,33 +613,120 @@ def build():
         sp(8),
     ]
 
-    # ── 6. Project file structure ─────────────────────────────────────────────
+    # ── 6. AD3 Oscilloscope Script ────────────────────────────────────────────
     story += [
-        h1("6. Repository Layout"),
-        m("ping_esp32/"),
+        h1("6. Analog Discovery 3 — Automated ToF Reader"),
+        p("The script <b>ad3_oscilloscope/ad3_tof_reader.py</b> automates RTT capture "
+          "and ToF/distance calculation using the Digilent Analog Discovery 3. "
+          "It requires Digilent WaveForms to be installed on the host machine "
+          "(provides the <i>libdwf</i> C library) and runs in the dedicated Python "
+          "venv at <b>ad3_oscilloscope/venv/</b>."),
+        sp(6),
+        h2("6.1  Hardware connections"),
+    ]
+    story += [
+        pin_table([
+            ("AD3 Ch1 (1+)", "Alpha GPIO4", "TX fired — oscilloscope Ch1 trigger"),
+            ("AD3 Ch2 (2+)", "Alpha GPIO5", "Reply received — oscilloscope Ch2 trigger"),
+            ("AD3 GND",      "Alpha GND",   "Common ground"),
+        ]),
+        sp(8),
+        h2("6.2  Capture strategy — Record mode"),
+        p("The AD3 has a 16K sample buffer. To cover the full 7+ second RTT window at "
+          "a useful sample rate, the script uses DWF <b>Record mode</b> which streams "
+          "data continuously beyond the buffer size."),
+    ]
+
+    capture_rows = [
+        ("100 kS/s", "10 µs",   "0.16 s",  "50 samples", "Buffer too short"),
+        ("10 kS/s",  "100 µs",  "1.6 s",   "5 samples",  "Buffer too short"),
+        ("2 kS/s",   "500 µs",  "8.2 s ✓", "1 sample",   "Pulse barely visible"),
+        ("10 kS/s + Record", "100 µs", "Unlimited ✓", "5 samples ✓", "Chosen approach"),
+    ]
+    cap_t = Table(
+        [[Paragraph("<b>Rate</b>",     sty("cph","Normal",fontSize=9,fontName="Helvetica-Bold",textColor=colors.white)),
+          Paragraph("<b>Interval</b>", sty("cph","Normal",fontSize=9,fontName="Helvetica-Bold",textColor=colors.white)),
+          Paragraph("<b>Window</b>",   sty("cph","Normal",fontSize=9,fontName="Helvetica-Bold",textColor=colors.white)),
+          Paragraph("<b>Pulse width</b>", sty("cph","Normal",fontSize=9,fontName="Helvetica-Bold",textColor=colors.white)),
+          Paragraph("<b>Notes</b>",    sty("cph","Normal",fontSize=9,fontName="Helvetica-Bold",textColor=colors.white))]] +
+        [[Paragraph(a,mono_sty), Paragraph(b,mono_sty), Paragraph(c,body_sty),
+          Paragraph(d,mono_sty), Paragraph(e,body_sty)] for a,b,c,d,e in capture_rows],
+        colWidths=[1.2*inch, 0.75*inch, 1.0*inch, 1.0*inch, 1.85*inch],
+    )
+    cap_t.setStyle(TableStyle([
+        ("BACKGROUND",     (0,0), (-1,0),  ACCENT),
+        ("ROWBACKGROUNDS", (0,1), (-1,-1), [LIGHT, colors.white]),
+        ("BACKGROUND",     (0,-1),(-1,-1), colors.HexColor("#d4edda")),
+        ("GRID",           (0,0), (-1,-1), 0.3, MID),
+        ("TOPPADDING",     (0,0), (-1,-1), 5),
+        ("BOTTOMPADDING",  (0,0), (-1,-1), 5),
+        ("LEFTPADDING",    (0,0), (-1,-1), 6),
+        ("TEXTCOLOR",      (0,0), (-1,0),  colors.white),
+    ]))
+    story += [cap_t, sp(6),
+              note("Sub-sample linear interpolation on the rising edge gives <100 µs "
+                   "time resolution regardless of sample interval."),
+              sp(8)]
+
+    story += [h2("6.3  Usage")]
+    usage_rows = [
+        ("Step 1 — Calibrate",
+         "venv/bin/python ad3_tof_reader.py --calibrate --distance 100 --count 20",
+         "Run at known separation d₀. Outputs calibration offset."),
+        ("Step 2 — Measure",
+         "venv/bin/python ad3_tof_reader.py --offset <value> --count 20",
+         "Run at unknown distance. Outputs ToF and distance."),
+        ("With plots",
+         "... --plot",
+         "Adds raw capture plot + RTT distribution + distance histogram."),
+    ]
+    use_t = Table(
+        [[Paragraph("<b>Mode</b>",    sty("uh","Normal",fontSize=9,fontName="Helvetica-Bold",textColor=colors.white)),
+          Paragraph("<b>Command</b>", sty("uh","Normal",fontSize=9,fontName="Helvetica-Bold",textColor=colors.white)),
+          Paragraph("<b>Output</b>",  sty("uh","Normal",fontSize=9,fontName="Helvetica-Bold",textColor=colors.white))]] +
+        [[Paragraph(a,body_sty), Paragraph(b,mono_sty), Paragraph(c,body_sty)] for a,b,c in usage_rows],
+        colWidths=[1.1*inch, 2.5*inch, 2.2*inch],
+    )
+    use_t.setStyle(TableStyle([
+        ("BACKGROUND",     (0,0), (-1,0),  ACCENT),
+        ("ROWBACKGROUNDS", (0,1), (-1,-1), [LIGHT, colors.white]),
+        ("GRID",           (0,0), (-1,-1), 0.3, MID),
+        ("TOPPADDING",     (0,0), (-1,-1), 5),
+        ("BOTTOMPADDING",  (0,0), (-1,-1), 5),
+        ("LEFTPADDING",    (0,0), (-1,-1), 6),
+        ("VALIGN",         (0,0), (-1,-1), "TOP"),
+        ("TEXTCOLOR",      (0,0), (-1,0),  colors.white),
+    ]))
+    story += [use_t, sp(8)]
+
+    # ── 7. Project file structure ─────────────────────────────────────────────
+    story += [
+        h1("7. Repository Layout"),
+        m("LoraRanger/"),
         m("├── src/"),
-        m("│   ├── main.rs          # Alpha firmware (TX node)"),
-        m("│   └── app_desc.rs      # ESP-IDF app descriptor (bootloader req.)"),
-        m("├── Cargo.toml           # Rust dependencies"),
-        m("├── build.rs             # Linker script injection + rodata.x shadow"),
-        m("├── rust-toolchain.toml  # Pins to 'esp' Xtensa toolchain"),
-        m("├── .cargo/config.toml   # Target, linker, espflash runner"),
-        m("├── docs_venv/           # Python venv for PDF generation"),
-        m("└── generate_summary.py  # This script"),
-        sp(4),
-        note("Beta firmware will live in a sibling crate (ping_esp32_beta/) sharing the "
-             "same toolchain and board support files."),
+        m("│   ├── main.rs              # Alpha firmware (TX node)"),
+        m("│   ├── app_desc.rs          # ESP-IDF app descriptor (bootloader req.)"),
+        m("│   └── bin/beta.rs          # Beta firmware (RX responder)"),
+        m("├── ad3_oscilloscope/"),
+        m("│   └── ad3_tof_reader.py    # AD3 automated RTT/ToF/distance script"),
+        m("├── Cargo.toml               # Rust dependencies"),
+        m("├── build.rs                 # Linker script injection + rodata.x shadow"),
+        m("├── rust-toolchain.toml      # Pins to 'esp' Xtensa toolchain"),
+        m("├── .cargo/config.toml       # Target, linker, espflash runner"),
+        m("├── docs_venv/               # Python venv for PDF + notebook generation"),
+        m("├── generate_summary.py      # This script"),
+        m("├── generate_notebook.py     # Jupyter notebook generator"),
+        m("└── ping_esp32_walkthrough.ipynb"),
         sp(8),
     ]
 
-    # ── 7. Open items ─────────────────────────────────────────────────────────
+    # ── 8. Open items ─────────────────────────────────────────────────────────
     story += [
-        h1("7. Open Items / Next Steps"),
-        b("Implement Alpha / Beta split — create ping_esp32_beta crate with RX-first flow."),
+        h1("8. Open Items / Next Steps"),
         b("Verify VEXT pin (GPIO21) enables LoRa correctly on both physical boards."),
         b("Extend loop timer to ≥ 7 s to clear SF12 air-time (~5.6 s round-trip minimum)."),
-        b("Calibrate oscilloscope baseline RTT at point-blank range; record as t_air_ref."),
-        b("ToF = (scope RTT − t_air_ref) / 2 — validate against known separation distance."),
+        b("Calibrate AD3 baseline RTT at point-blank range using ad3_tof_reader.py --calibrate."),
+        b("Validate calibration offset at a second known distance before field deployment."),
         b("Field test at increasing distances; plot ToF vs GPS-measured range."),
         b("Evaluate lower SF (e.g. SF9) to reduce air-time and improve µs-resolution of ToF delta."),
         b("Add RSSI/SNR logging via esp-println for link-quality correlation with range."),
