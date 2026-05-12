@@ -13,6 +13,7 @@ use embassy_executor::Spawner;
 use embassy_time::{Delay, Duration, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_backtrace as _;
+use embedded_hal::delay::DelayNs;
 use esp_hal::{
     gpio::{Input, Level, Output, Pull},
     spi::master::Spi,
@@ -28,9 +29,11 @@ use lora_phy::{
 
 const LORA_FREQUENCY_HZ: u32 = 915_000_000;
 
+// 500 µs hold — visible at AD3 low sample rates, consistent for calibration offset
 #[inline(always)]
 fn pulse(pin: &mut Output<'_>) {
     pin.set_high();
+    esp_hal::delay::Delay::new().delay_us(500);
     pin.set_low();
 }
 

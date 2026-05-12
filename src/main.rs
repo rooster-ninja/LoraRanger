@@ -12,6 +12,7 @@ use embassy_executor::Spawner;
 use embassy_time::{Delay, Duration, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_backtrace as _;
+use embedded_hal::delay::DelayNs;
 use esp_hal::{
     gpio::{Input, Level, Output, Pull},
     spi::master::Spi,
@@ -28,10 +29,12 @@ use lora_phy::{
 const LORA_FREQUENCY_HZ: u32 = 915_000_000;
 
 // Pulse a pin high then low — oscilloscope timing marker
-// Placed inline to keep the hot path as deterministic as possible
+// 500 µs hold ensures the edge is visible at the AD3's lowest sample rates (~2.3 kS/s).
+// The hold time is a fixed, consistent delay absorbed into the calibration offset.
 #[inline(always)]
 fn pulse(pin: &mut Output<'_>) {
     pin.set_high();
+    esp_hal::delay::Delay::new().delay_us(500);
     pin.set_low();
 }
 
