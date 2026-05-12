@@ -1,0 +1,27 @@
+[package]
+name = "ping_esp32"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+esp-hal = { version = "0.23", features = ["esp32s3"] }
+esp-backtrace = { version = "0.15", features = ["esp32s3", "panic-handler", "println"] }
+esp-println = { version = "0.13", features = ["esp32s3", "log"] }
+lora-phy = "3"
+embedded-hal-bus = { version = "0.2", features = ["async"] }
+embassy-time = "0.4"
+esp-hal-embassy = { version = "0.6", features = ["esp32s3"] }
+embassy-executor = { version = "0.7", features = ["task-arena-size-32768"] }
+
+[profile.dev]
+debug = true
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1
+debug = true
+debug-assertions = false
+incremental = false
+lto = "fat"
+opt-level = "s"
+overflow-checks = false

@@ -1,0 +1,9 @@
+/target
+/docs_venv
+*.pdf
+airtime_vs_sf.png
+tof_vs_distance.png
+ping_esp32_walkthrough_executed.ipynb
+.ipynb_checkpoints/
+git-hub-ssh-key
+git-hub-ssh-key.pub
