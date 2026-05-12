@@ -58,21 +58,47 @@ SUPPLY_WARMUP_S   = 1.5               # seconds to wait after enabling supply
 def load_dwf():
     """Load the Digilent WaveForms dwf shared library."""
     if sys.platform == "darwin":
-        lib = "/Applications/WaveForms.app/Contents/Frameworks/dwf.framework/dwf"
+        candidates = [
+            "/Library/Frameworks/dwf.framework/dwf",                              # Adept Runtime (preferred)
+            "/Applications/WaveForms.app/Contents/Frameworks/dwf.framework/dwf",  # WaveForms bundle fallback
+        ]
     elif sys.platform.startswith("win"):
-        lib = "dwf"
+        candidates = ["dwf"]
     else:
-        lib = "libdwf.so"
-    try:
-        return ctypes.cdll.LoadLibrary(lib)
-    except OSError:
-        print(f"ERROR: Could not load dwf library at '{lib}'.")
-        print("       Install Digilent WaveForms: https://digilent.com/waveforms")
-        sys.exit(1)
+        candidates = ["libdwf.so"]
+
+    for lib in candidates:
+        try:
+            return ctypes.cdll.LoadLibrary(lib)
+        except OSError:
+            continue
+
+    print("ERROR: Could not load dwf library. Install Adept 2 Runtime:")
+    print("       https://digilent.com/reference/software/adept/start")
+    sys.exit(1)
 
 
 def open_device(dwf):
     """Open the first available Digilent device. Returns handle."""
+    # Enumerate devices first for diagnostics
+    cdevice = ctypes.c_int()
+    dwf.FDwfEnum(ctypes.c_int(0), ctypes.byref(cdevice))
+    print(f"Devices found: {cdevice.value}")
+
+    if cdevice.value == 0:
+        szerr = ctypes.create_string_buffer(512)
+        dwf.FDwfGetLastErrorMsg(szerr)
+        print(f"ERROR: No devices found. {szerr.value.decode()}")
+        print("  → Close the WaveForms app completely if it is open")
+        print("  → Check the AD3 USB cable is seated")
+        sys.exit(1)
+
+    # Print device names
+    for i in range(cdevice.value):
+        name = ctypes.create_string_buffer(64)
+        dwf.FDwfEnumDeviceName(ctypes.c_int(i), name)
+        print(f"  [{i}] {name.value.decode()}")
+
     hdwf = ctypes.c_int()
     dwf.FDwfDeviceOpen(ctypes.c_int(-1), ctypes.byref(hdwf))
     if hdwf.value == 0:
