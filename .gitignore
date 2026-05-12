@@ -1,5 +1,6 @@
 /target
 /docs_venv
+/ad3_oscilloscope/venv
 *.pdf
 airtime_vs_sf.png
 tof_vs_distance.png
