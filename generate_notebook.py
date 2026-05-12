@@ -630,6 +630,244 @@ cells.append(md("""\
 **Reference:** `ping_esp32_summary.pdf` | **Firmware:** `src/main.rs` (Alpha), `src/bin/beta.rs` (Beta)
 """))
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 10. AD3 oscilloscope script
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+cells.append(md("""\
+## 10 — Analog Discovery 3 ToF Reader (`ad3_oscilloscope/ad3_tof_reader.py`)
+
+Automates RTT capture and ToF/distance calculation using the Digilent Analog Discovery 3.
+Requires Digilent WaveForms installed on the host machine (provides `libdwf`).
+
+### 10.1 — Hardware connections
+
+```
+AD3 Ch1 (1+) → Alpha GPIO4   TX fired         (scope Ch1)
+AD3 Ch2 (2+) → Alpha GPIO5   reply received   (scope Ch2)
+AD3 GND      → Alpha GND
+```
+
+### 10.2 — Why Record mode?
+
+The AD3 has a **16K sample buffer**. At a 7+ second RTT window:
+
+| Sample rate | Sample interval | Buffer covers | 500 µs pulse width |
+|-------------|----------------|---------------|-------------------|
+| 100 kS/s | 10 µs | 0.16 s ❌ | 50 samples ✓ |
+| 10 kS/s | 100 µs | 1.6 s ❌ | 5 samples ✓ |
+| 2 kS/s | 500 µs | 8.2 s ✓ | 1 sample ⚠️ |
+
+**Record mode** streams data continuously beyond the 16K buffer, decoupling capture
+length from buffer size. We run at **10 kS/s** — the 500 µs pulse shows as 5 clean
+samples, and sub-sample linear interpolation gives <100 µs edge resolution.
+
+### 10.3 — Script usage
+
+```bash
+cd ad3_oscilloscope
+venv/bin/python ad3_tof_reader.py --calibrate --distance 100 --count 20
+venv/bin/python ad3_tof_reader.py --offset <from above> --count 20 --plot
+```
+"""))
+
+cells.append(md("### 10.4 — Edge detection algorithm (runnable demo)"))
+
+cells.append(code("""\
+# ── Simulate a 10-second AD3 capture at 10 kS/s ──────────────────────────────
+# Reproduces what ad3_tof_reader.py receives from the hardware.
+
+SAMPLE_RATE  = 10_000          # Hz
+RECORD_TIME  = 10.0            # seconds
+THRESHOLD_V  = 1.65
+PULSE_US     = 500             # firmware pulse width
+NOISE_MV     = 30              # ±30 mV noise floor
+
+# Simulated scenario: distance = 10 km → ToF = 33.3 µs one-way
+SIM_DISTANCE_M = 10_000
+SIM_TOF_MS     = SIM_DISTANCE_M / (2.998e8 / 1000)
+SIM_AIR_TIME_MS = 2793.0
+SIM_OFFSET_MS   = 2 * SIM_AIR_TIME_MS + 150e-3   # 150 µs of fixed firmware delays
+
+t_ms   = np.arange(int(SAMPLE_RATE * RECORD_TIME)) / SAMPLE_RATE * 1000
+ch1    = np.random.normal(0.0, NOISE_MV / 1000, len(t_ms))   # idle noise
+ch2    = ch1.copy()
+
+def inject_pulse(signal, t_ms, edge_ms, pulse_us, v_high=3.3):
+    \"\"\"Inject a square pulse into signal at edge_ms with width pulse_us.\"\"\"
+    t_start = edge_ms
+    t_end   = edge_ms + pulse_us / 1000
+    mask = (t_ms >= t_start) & (t_ms < t_end)
+    signal[mask] = v_high + np.random.normal(0, NOISE_MV / 1000, mask.sum())
+
+# Ch1 edge: Alpha fires TX at t=1000 ms into the record window
+T_CH1_MS = 1000.0
+inject_pulse(ch1, t_ms, T_CH1_MS, PULSE_US)
+
+# Ch2 edge: reply received after 2×air-time + 2×ToF + fixed delays
+T_CH2_MS = T_CH1_MS + 2 * SIM_AIR_TIME_MS + 2 * SIM_TOF_MS + 150e-3
+inject_pulse(ch2, t_ms, T_CH2_MS, PULSE_US)
+
+print(f"Simulated scenario  : {SIM_DISTANCE_M/1000:.0f} km separation")
+print(f"Ch1 edge injected   : {T_CH1_MS:.3f} ms")
+print(f"Ch2 edge injected   : {T_CH2_MS:.3f} ms")
+print(f"True RTT            : {T_CH2_MS - T_CH1_MS:.3f} ms")
+"""))
+
+cells.append(code("""\
+def find_rising_edge_ms(signal, t_ms, threshold):
+    \"\"\"
+    Interpolated rising edge detection — same algorithm as ad3_tof_reader.py.
+    Returns time in ms of first threshold crossing, or None.
+    \"\"\"
+    above = signal > threshold
+    crossings = np.where(~above[:-1] & above[1:])[0]
+    if len(crossings) == 0:
+        return None
+    i = crossings[0]
+    v0, v1 = signal[i], signal[i + 1]
+    frac = (threshold - v0) / (v1 - v0) if (v1 != v0) else 0.0
+    dt_ms = 1000 / SAMPLE_RATE   # ms per sample
+    return t_ms[i] + frac * dt_ms
+
+# ── Detect edges ──────────────────────────────────────────────────────────────
+t1_detected = find_rising_edge_ms(ch1, t_ms, THRESHOLD_V)
+t2_detected = find_rising_edge_ms(ch2, t_ms, THRESHOLD_V)
+
+rtt_measured  = t2_detected - t1_detected
+tof_extracted = (rtt_measured - SIM_OFFSET_MS) / 2        # apply calibration offset
+dist_computed = tof_extracted / 1000 * 2.998e8            # ms → m
+
+print(f"── Edge detection results ───────────────────────────────────")
+print(f"Ch1 detected    : {t1_detected:.4f} ms  (true: {T_CH1_MS:.4f} ms)")
+print(f"Ch2 detected    : {t2_detected:.4f} ms  (true: {T_CH2_MS:.4f} ms)")
+print(f"RTT measured    : {rtt_measured:.4f} ms")
+print(f"RTT error       : {(rtt_measured - (T_CH2_MS - T_CH1_MS))*1000:.3f} µs")
+print(f"\\nToF (one-way)   : {tof_extracted*1000:.4f} µs  (true: {SIM_TOF_MS*1000:.4f} µs)")
+print(f"Distance        : {dist_computed:.2f} m  (true: {SIM_DISTANCE_M:.1f} m)")
+print(f"Distance error  : {abs(dist_computed - SIM_DISTANCE_M):.2f} m")
+"""))
+
+cells.append(code("""\
+# ── Plot the simulated capture ─────────────────────────────────────────────────
+fig, axes = plt.subplots(2, 1, figsize=(14, 6), sharex=True)
+
+for ax, sig, label, colour, t_edge in zip(
+    axes,
+    [ch1, ch2],
+    ["Ch1 — Alpha GPIO4 (TX fired)", "Ch2 — Alpha GPIO5 (reply received)"],
+    ["#0f3460", "#e94560"],
+    [t1_detected, t2_detected],
+):
+    ax.plot(t_ms / 1000, sig, color=colour, linewidth=0.6, label=label)
+    ax.axhline(THRESHOLD_V, color="grey", linestyle="--", linewidth=0.8,
+               label=f"Threshold {THRESHOLD_V} V")
+    if t_edge:
+        ax.axvline(t_edge / 1000, color="orange", linewidth=1.5,
+                   label=f"Detected edge @ {t_edge:.3f} ms")
+    ax.set_ylim(-0.3, 4.0)
+    ax.set_ylabel("Voltage (V)")
+    ax.legend(loc="upper right", fontsize=8)
+    ax.grid(True, alpha=0.3)
+
+axes[1].set_xlabel("Time (s)")
+fig.suptitle(
+    f"Simulated AD3 capture — {SIM_DISTANCE_M/1000:.0f} km  |  "
+    f"RTT = {rtt_measured:.3f} ms  |  Distance = {dist_computed:.1f} m",
+    fontsize=11
+)
+plt.tight_layout()
+plt.savefig("ad3_simulated_capture.png", dpi=150)
+plt.show()
+"""))
+
+cells.append(md("""\
+### 10.5 — Key script sections walkthrough
+"""))
+
+cells.append(md("""\
+**Loading the dwf library** — WaveForms installs `libdwf` on the host OS.
+The script auto-selects the correct path per platform:
+"""))
+
+cells.append(md("""\
+```python
+# ad3_tof_reader.py — load_dwf()
+def load_dwf():
+    if sys.platform == "darwin":
+        lib = "/Library/Frameworks/dwf.framework/dwf"
+    elif sys.platform.startswith("win"):
+        lib = "dwf"
+    else:
+        lib = "libdwf.so"
+    return ctypes.cdll.LoadLibrary(lib)
+```
+"""))
+
+cells.append(md("""\
+**Record mode configuration** — decouples capture length from buffer size:
+"""))
+
+cells.append(md("""\
+```python
+# ad3_tof_reader.py — configure_scope()
+dwf.FDwfAnalogInAcquisitionModeSet(hdwf, acqmodeRecord)   # streaming record
+dwf.FDwfAnalogInFrequencySet(hdwf,    c_double(10_000))   # 10 kS/s
+dwf.FDwfAnalogInRecordLengthSet(hdwf, c_double(10.0))     # 10 second window
+
+# record_capture() — stream loop
+while idx < n_total:
+    dwf.FDwfAnalogInStatus(hdwf, c_int(1), byref(sts))
+    dwf.FDwfAnalogInStatusRecord(hdwf, byref(avail), byref(lost), byref(corrupt))
+    n = min(avail.value, n_total - idx)
+    dwf.FDwfAnalogInStatusData(hdwf, c_int(0), buf, c_int(n))  # Ch1
+    dwf.FDwfAnalogInStatusData(hdwf, c_int(1), buf, c_int(n))  # Ch2
+    idx += n
+```
+"""))
+
+cells.append(md("""\
+### 10.6 — Calibration workflow summary
+
+```
+Step 1:  Place Alpha and Beta at known distance d₀ (e.g. 100 m)
+         python ad3_tof_reader.py --calibrate --distance 100 --count 20
+
+         → offset = RTT₀_mean − 2×(d₀/c)
+           Absorbs: 2×air-time + SX1262 ramp + GPIO latency + all fixed delays
+
+Step 2:  Move to unknown distance
+         python ad3_tof_reader.py --offset <value> --count 20 --plot
+
+         → ToF  = (RTT_measured − offset) / 2
+         → d    = ToF × c
+```
+
+> The offset is valid as long as firmware timing remains stable (no reflash, same
+> temperature, same TX power). Re-calibrate if anything changes.
+"""))
+
+cells.append(code("""\
+# ── Monte Carlo: effect of RTT measurement noise on distance accuracy ─────────
+# How much distance error does jitter in RTT introduce?
+
+np.random.seed(42)
+N_TRIALS    = 10_000
+TRUE_DIST_M = 10_000          # 10 km
+OFFSET_MS   = SIM_OFFSET_MS
+
+true_rtt    = OFFSET_MS + 2 * (TRUE_DIST_M / (2.998e8 / 1000))
+
+for jitter_us in [10, 50, 100, 500]:
+    noisy_rtt = true_rtt + np.random.normal(0, jitter_us / 1000, N_TRIALS)
+    dists     = (noisy_rtt - OFFSET_MS) / 2 / 1000 * 2.998e8
+    err_m     = np.std(dists)
+    print(f"  RTT jitter {jitter_us:>4} µs  →  distance std = {err_m:.1f} m  "
+          f"({err_m/TRUE_DIST_M*100:.3f}%)")
+
+print(f"\\nAt SF12/BW125 the interpolated edge resolution is <100 µs,")
+print(f"giving distance accuracy < {np.std((true_rtt + np.random.normal(0, 0.1, N_TRIALS) - OFFSET_MS)/2/1000*2.998e8):.0f} m at 10 km.")
+"""))
+
 # ── Build and save ─────────────────────────────────────────────────────────────
 nb.cells = cells
 
