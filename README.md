@@ -127,6 +127,42 @@ cargo run --bin beta
 
 ---
 
+## Analog Discovery 3 — ToF Reader
+
+`ad3_oscilloscope/ad3_tof_reader.py` automates RTT capture and ToF/distance
+calculation using the Digilent Analog Discovery 3.
+
+**Requirements:** Digilent WaveForms installed (provides `libdwf`), AD3 connected via USB.
+
+```
+AD3 Ch1 (1+) → Alpha GPIO4   TX fired
+AD3 Ch2 (2+) → Alpha GPIO5   reply received
+AD3 GND      → Alpha GND
+```
+
+```bash
+cd ad3_oscilloscope
+
+# Set up environment (one-time)
+python3 -m venv venv && venv/bin/pip install numpy matplotlib pydwf
+
+# Step 1 — calibrate at a known distance
+venv/bin/python ad3_tof_reader.py --calibrate --distance 100 --count 20
+
+# Step 2 — measure at unknown distance (use offset from step 1)
+venv/bin/python ad3_tof_reader.py --offset 5587.123456 --count 20
+
+# With plots
+venv/bin/python ad3_tof_reader.py --offset 5587.123456 --count 10 --plot
+```
+
+Captures at **10 kS/s** in Record mode (streams beyond the 16K buffer). The 500 µs
+GPIO pulse appears as 5 samples; sub-sample linear interpolation gives <100 µs edge
+resolution. Calibration absorbs `2×air-time + all fixed firmware/radio delays` into
+one offset constant.
+
+---
+
 ## Project Files
 
 ```
@@ -136,6 +172,8 @@ LoraRanger/
 │   ├── app_desc.rs          # ESP-IDF bootloader app descriptor
 │   └── bin/
 │       └── beta.rs          # Beta firmware (RX responder)
+├── ad3_oscilloscope/
+│   └── ad3_tof_reader.py    # AD3 automated RTT/ToF/distance capture script
 ├── Cargo.toml
 ├── Cargo.lock
 ├── build.rs                 # Linker script injection + rodata.x shadow
