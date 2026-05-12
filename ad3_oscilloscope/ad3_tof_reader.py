@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 """
 LoraRanger — Analog Discovery 3 ToF Reader
 
@@ -9,19 +10,21 @@ Hardware connections:
   AD3 Ch1 (1+) → Alpha GPIO4   TX fired marker        (oscilloscope Ch1)
   AD3 Ch2 (2+) → Alpha GPIO5   reply received marker  (oscilloscope Ch2)
   AD3 GND      → Alpha GND
+  AD3 V+       → Beta VIN      5V power for Beta board (--power flag)
+  AD3 GND      → Beta GND
 
 Requires: WaveForms software installed (provides libdwf)
           pydwf, numpy, matplotlib  (pip install via this venv)
 
 Usage:
-  # Step 1 — calibrate at a known distance (e.g. 100 m)
-  python ad3_tof_reader.py --calibrate --distance 100 --count 20
+  # Step 1 — calibrate at a known distance, powering Beta via AD3 V+
+  python ad3_tof_reader.py --calibrate --distance 0.5 --count 10 --power
 
   # Step 2 — measure at unknown distance
-  python ad3_tof_reader.py --offset <value from step 1> --count 20
+  python ad3_tof_reader.py --offset <value from step 1> --count 20 --power
 
   # Plot a single raw capture to verify signal
-  python ad3_tof_reader.py --plot --offset 0
+  python ad3_tof_reader.py --plot --offset 0 --power
 """
 
 import sys
@@ -47,11 +50,15 @@ CHANNEL_RANGE_V = 5.0              # ±5 V input range
 acqmodeRecord     = ctypes.c_int(3)
 DwfStateDone      = ctypes.c_byte(2)
 
+# ── AD3 power supply defaults ─────────────────────────────────────────────────
+SUPPLY_VOLTAGE_V  = 5.0               # V+ rail voltage — 5V matches USB, board regulates to 3.3V
+SUPPLY_WARMUP_S   = 1.5               # seconds to wait after enabling supply
+
 
 def load_dwf():
     """Load the Digilent WaveForms dwf shared library."""
     if sys.platform == "darwin":
-        lib = "/Library/Frameworks/dwf.framework/dwf"
+        lib = "/Applications/WaveForms.app/Contents/Frameworks/dwf.framework/dwf"
     elif sys.platform.startswith("win"):
         lib = "dwf"
     else:
@@ -74,6 +81,22 @@ def open_device(dwf):
         print(f"ERROR: Could not open device: {szerr.value.decode()}")
         sys.exit(1)
     return hdwf
+
+
+def enable_supply(dwf, hdwf, voltage=SUPPLY_VOLTAGE_V):
+    """Enable AD3 V+ power supply at the given voltage (max 5V, 700mA)."""
+    # Channel 0 = V+  Node 0 = enable,  Node 1 = voltage
+    dwf.FDwfAnalogIOChannelNodeSet(hdwf, ctypes.c_int(0), ctypes.c_int(0), ctypes.c_double(1))
+    dwf.FDwfAnalogIOChannelNodeSet(hdwf, ctypes.c_int(0), ctypes.c_int(1), ctypes.c_double(voltage))
+    dwf.FDwfAnalogIOEnableSet(hdwf, ctypes.c_int(1))
+    print(f"AD3 V+ supply enabled at {voltage:.1f} V — waiting {SUPPLY_WARMUP_S:.1f} s for board to boot...")
+    time.sleep(SUPPLY_WARMUP_S)
+
+
+def disable_supply(dwf, hdwf):
+    """Disable AD3 V+ power supply."""
+    dwf.FDwfAnalogIOEnableSet(hdwf, ctypes.c_int(0))
+    print("AD3 V+ supply disabled.")
 
 
 def configure_scope(dwf, hdwf):
@@ -183,6 +206,10 @@ def plot_capture(ch1, ch2, t_ms, t1_ms=None, t2_ms=None, title=""):
 def run(args):
     dwf  = load_dwf()
     hdwf = open_device(dwf)
+
+    if args.power:
+        enable_supply(dwf, hdwf, args.voltage)
+
     configure_scope(dwf, hdwf)
 
     print(f"Analog Discovery 3 connected.")
@@ -219,6 +246,8 @@ def run(args):
             plot_capture(ch1, ch2, t_ms, t1, t2,
                          title=f"LoraRanger capture — RTT = {rtt:.3f} ms")
 
+    if args.power:
+        disable_supply(dwf, hdwf)
     dwf.FDwfDeviceClose(hdwf)
 
     if not rtts_ms:
@@ -317,6 +346,10 @@ Examples:
                    help="Number of captures to average (default: 10)")
     p.add_argument("--plot",       action="store_true",
                    help="Show plots (first raw capture + final results)")
+    p.add_argument("--power",      action="store_true",
+                   help="Enable AD3 V+ supply to power Beta board")
+    p.add_argument("--voltage",    type=float, default=SUPPLY_VOLTAGE_V,
+                   help=f"V+ supply voltage in volts (default: {SUPPLY_VOLTAGE_V}V)")
 
     args = p.parse_args()
 
