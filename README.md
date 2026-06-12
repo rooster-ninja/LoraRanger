@@ -25,6 +25,8 @@ A bare-metal Rust LoRa Time-of-Flight measurement system using two Heltec Wirele
 
 ## Hardware
 
+![Heltec Wireless Stick v3](assets/heltec_v3.1.jpeg)
+
 | Component | Detail |
 |-----------|--------|
 | MCU | ESP32-S3 (Xtensa LX7, 240 MHz) |
@@ -44,25 +46,30 @@ A bare-metal Rust LoRa Time-of-Flight measurement system using two Heltec Wirele
 | RST | 12 | SX1262 reset |
 | BUSY | 13 | SX1262 busy |
 | DIO1 | 14 | TX/RX done IRQ |
-| VEXT | 21 | LoRa power (drive LOW) |
+| VEXT | 36 | Display power (drive LOW) |
+| OLED RST | 21 | Display reset (pulse LOW→HIGH at boot) |
+| OLED SDA | 17 | I2C data |
+| OLED SCL | 18 | I2C clock |
+
+OLED I2C address: `0x3C`
 
 ### Oscilloscope GPIO
 
 | Pin | Node | Channel | Event |
 |-----|------|---------|-------|
-| GPIO4 | Alpha | Ch1 | Pulses before TX |
+| GPIO2 | Alpha | Ch1 | Pulses before TX |
 | GPIO5 | Alpha | Ch2 | Pulses on reply received (RTT complete) |
-| GPIO4 | Beta | Ch1 | Pulses before TX reply |
+| GPIO2 | Beta | Ch1 | Pulses before TX reply |
 
 ---
 
 ## Nodes
 
 ### Alpha — `src/main.rs`
-Initiates a ping every ~7.6 seconds. Pulses **GPIO4** (Ch1) immediately before transmitting, then pulses **GPIO5** (Ch2) the instant Beta's reply is received. The oscilloscope delta between Ch1 and Ch2 is the measured RTT.
+Initiates a ping every ~7.6 seconds. Pulses **GPIO2** (Ch1) immediately before transmitting, then pulses **GPIO5** (Ch2) the instant Beta's reply is received. The oscilloscope delta between Ch1 and Ch2 is the measured RTT.
 
 ### Beta — `src/bin/beta.rs`
-Listens continuously. On receiving Alpha's packet, pulses **GPIO4** (Ch1) and replies immediately. No processing between receive and reply to minimise timing jitter.
+Listens continuously. On receiving Alpha's packet, pulses **GPIO2** (Ch1) and replies immediately. No processing between receive and reply to minimise timing jitter.
 
 ---
 
@@ -76,7 +83,7 @@ Listens continuously. On receiving Alpha's packet, pulses **GPIO4** (Ch1) and re
 | Coding Rate | 4/8 | Maximum FEC |
 | Payload | 1 byte | Minimum valid packet |
 | Output power | 14 dBm | Within regulatory limit |
-| Air-time | ~2 793 ms/packet | Calculated from parameters |
+| Air-time | ~926 ms/packet | Calculated from parameters (1-byte payload) |
 
 ---
 
@@ -99,7 +106,7 @@ Rather than relying purely on theoretical air-time, an empirical calibration is 
 
 The calibration offset absorbs all stable fixed delays (SX1262 TX ramp ~100 µs, GPIO toggle latency, executor wake time) as long as they remain consistent across the session.
 
-> **Note:** At SF12/BW125 the minimum RTT at point-blank range is ~5.6 s. The ToF contribution at 10 km is only ~66 µs above this baseline — oscilloscope µs-resolution measurement is required.
+> **Note:** At SF12/BW125 the minimum RTT at point-blank range is ~1.86 s (2 × 926 ms packets + turnaround). The ToF contribution at 10 km is only ~66 µs above this baseline — oscilloscope µs-resolution measurement is required.
 
 ---
 
